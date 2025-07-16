@@ -1,35 +1,25 @@
 from fastapi import APIRouter, HTTPException
-from app.models.schemas import InitializeRequest, InitializeResponse, RetrieveRequest, RetrieveResponse
+from app.models.schemas import RetrieveRequest, RetrieveResponse
 from app.services.retrieval_service import RetrievalService
 
 router = APIRouter()
-retrieval_service = None
-
-
-@router.post("/initialize", response_model=InitializeResponse)
-async def initialize(request: InitializeRequest):
-    global retrieval_service
-    
-    try:
-        retrieval_service = RetrievalService()
-        retrieval_service.connect_to_milvus(request.collection_name)
-        retrieval_service.create_collection(request.collection_name)
-        
-        return InitializeResponse(
-            success=True,
-            message="Retrieval system initialized successfully",
-            collection_name=request.collection_name
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Initialization failed: {str(e)}")
+retrieval_services = {}
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(request: RetrieveRequest):
-    global retrieval_service
+    global retrieval_services
     
-    if retrieval_service is None:
-        raise HTTPException(status_code=400, detail="Retrieval system not initialized. Call /initialize first.")
+    if request.collection_name not in retrieval_services:
+        try:
+            retrieval_service = RetrievalService()
+            retrieval_service.connect_to_milvus(request.collection_name)
+            retrieval_service.create_collection(request.collection_name)
+            retrieval_services[request.collection_name] = retrieval_service
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to initialize collection {request.collection_name}: {str(e)}")
+    
+    retrieval_service = retrieval_services[request.collection_name]
     
     try:
         results = retrieval_service.search(

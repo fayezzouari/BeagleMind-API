@@ -6,3 +6,4 @@ app/models/__pycache__
 app/routers/__pycache__
 app/.env
 __pycache__
+app/services/search_vectorstore.py

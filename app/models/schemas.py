@@ -2,18 +2,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
 
-class InitializeRequest(BaseModel):
-    collection_name: str = "beaglemind_col"
-
-
-class InitializeResponse(BaseModel):
-    success: bool
-    message: str
-    collection_name: str
-
-
 class RetrieveRequest(BaseModel):
     query: str
+    collection_name: str = "beaglemind_col"
     n_results: int = 10
     include_metadata: bool = True
     rerank: bool = True
