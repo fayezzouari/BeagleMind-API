@@ -1,8 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 pymilvus
-sentence-transformers
 transformers
-torch
 numpy
+python-dotenv
+onnxruntime

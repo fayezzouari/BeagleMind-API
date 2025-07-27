@@ -1,156 +1,92 @@
-# Information Retrieval API
+# BeagleMind RAG API
 
-A FastAPI-based information retrieval system using Milvus vector database and sentence transformers for semantic search.
+A FastAPI-based system for document ingestion and semantic search using ONNX models.
 
-## Project Structure
+## Features
 
-```
-rag_api/
-├── app/
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py          # Pydantic models for request/response
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   └── retrieval.py        # API endpoints
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── retrieval_service.py # Core retrieval logic
-│   ├── __init__.py
-│   └── config.py               # Configuration settings
-├── main.py                     # FastAPI application entry point
-├── run.py                      # Development server runner
-├── requirements.txt            # Dependencies
-└── README.md                   # This file
-```
+- **GitHub Repository Ingestion**: Directly ingest GitHub repositories with metadata extraction
+- **Forum Data Ingestion**: Process forum JSON data into searchable format
+- **Semantic Search**: ONNX-powered semantic search with reranking
+- **Background Processing**: Asynchronous ingestion with status tracking
 
-## Installation
+## Setup
 
-1. Create and activate virtual environment:
-```bash
-python -m venv myenv
-source myenv/bin/activate  # On Linux/Mac
-```
-
-2. Install dependencies:
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-## Configuration
+2. Place ONNX models in `onnx/` directory:
+   - `onnx/model.onnx` (BGE embedding model)
+   - `onnx/cross_encoder.onnx` (Reranker model)
 
-Set environment variables for Milvus connection:
-
+3. Configure environment variables:
 ```bash
-export MILVUS_HOST="localhost"
-export MILVUS_PORT="19530"
-export MILVUS_USER=""
-export MILVUS_PASSWORD=""
-export MILVUS_TOKEN=""
-export MILVUS_URI=""  # Use this for cloud instances
+export MILVUS_HOST=localhost
+export MILVUS_PORT=19530
+# Add other Milvus config as needed
 ```
 
-## Running the API
-
-### Development Server
+4. Start the API:
 ```bash
-python run.py
+python app/main.py
 ```
-
-### Production Server
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-The API will be available at `http://localhost:8000`
 
 ## API Endpoints
 
-### 1. Initialize Retrieval System
-
-**POST** `/api/v1/initialize`
-
-Initialize the Milvus collection and embedding models.
-
-**Request Body:**
-```json
+### Search
+```bash
+POST /api/v1/search
 {
-    "collection_name": "beaglemind_col"
-}
-```
-
-**Response:**
-```json
-{
-    "success": true,
-    "message": "Retrieval system initialized successfully",
-    "collection_name": "beaglemind_col"
-}
-```
-
-### 2. Retrieve Documents
-
-**POST** `/api/v1/retrieve`
-
-Search for documents using semantic similarity.
-
-**Request Body:**
-```json
-{
-    "query": "machine learning algorithms",
+    "query": "How to configure BeagleBone GPIO?",
+    "collection_name": "beaglemind_docs",
     "n_results": 10,
-    "include_metadata": true,
     "rerank": true
 }
 ```
 
-**Response:**
-```json
+### GitHub Ingestion
+```bash
+POST /api/v1/ingest/github
 {
-    "documents": [["Document text 1", "Document text 2", ...]],
-    "metadatas": [[
-        {
-            "score": 0.95,
-            "distance": 0.05,
-            "file_name": "example.txt",
-            "file_path": "/path/to/file",
-            "chunk_index": 0,
-            "language": "python",
-            "has_code": true
-        }
-    ]],
-    "distances": [[0.05, 0.08, ...]],
-    "total_found": 100,
-    "filtered_results": 10
+    "repo_url": "https://github.com/beagleboard/docs.beagleboard.io",
+    "branch": "main",
+    "collection_name": "beaglemind_docs"
 }
 ```
 
-## Models Used
-
-- **Embedding Model**: `BAAI/bge-base-en-v1.5` (BGE base English v1.5)
-- **Reranker Model**: `cross-encoder/ms-marco-MiniLM-L-6-v2` (CrossEncoder for reranking)
-
-## Features
-
-- Semantic document search using BAAI BGE embeddings
-- CrossEncoder-based reranking for improved relevance
-- Comprehensive metadata support
-- Vector similarity search with COSINE metric
-- Configurable result filtering and ranking
-
-## Health Check
-
-**GET** `/health`
-
-Returns API health status:
-```json
+### Forum Ingestion
+```bash
+POST /api/v1/ingest/forum
 {
-    "status": "healthy"
+    "json_path": "/path/to/forum_data.json",
+    "collection_name": "beaglemind_docs"
 }
 ```
 
-## API Documentation
+### Check Status
+```bash
+GET /api/v1/ingest/status/{task_id}
+```
 
-Interactive API documentation is available at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+## Command Line Usage
+
+### GitHub Ingestion
+```bash
+python app/scripts/github_ingestor.py https://github.com/beagleboard/docs.beagleboard.io \
+    --collection beaglemind_docs \
+    --branch main
+```
+
+### Forum Ingestion
+```bash
+python app/scripts/forum_ingestor.py forum_data.json \
+    --collection beaglemind_docs
+```
+
+## Architecture
+
+- **FastAPI**: Web framework for the API
+- **ONNX Runtime**: Efficient model inference
+- **Milvus**: Vector database for semantic search
+- **Background Tasks**: Asynchronous processing for large ingestions

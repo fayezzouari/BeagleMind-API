@@ -4,7 +4,9 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
-from sentence_transformers import SentenceTransformer, CrossEncoder
+import onnxruntime as ort
+from transformers import AutoTokenizer
+import numpy as np
 import os
 from app.config import (
     MILVUS_HOST,
@@ -23,14 +25,26 @@ logger.setLevel(logging.CRITICAL)
 
 class RetrievalService:
     def __init__(self):
-        self.embedding_model = SentenceTransformer("BAAI/bge-base-en-v1.5")
-        
+        # Initialize embedding model with ONNX
         try:
-            self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            self.embedding_tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-base-en-v1.5")
+            self.embedding_session = ort.InferenceSession("onnx/model.onnx")
+            self.has_embedding_model = True
+        except Exception as e:
+            logger.warning(f"Could not load embedding model: {e}")
+            self.embedding_tokenizer = None
+            self.embedding_session = None
+            self.has_embedding_model = False
+        
+        # Initialize reranker model with ONNX
+        try:
+            self.reranker_tokenizer = AutoTokenizer.from_pretrained('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            self.reranker_session = ort.InferenceSession("onnx/cross_encoder.onnx")
             self.has_reranker = True
         except Exception as e:
             logger.warning(f"Could not load reranker model: {e}")
-            self.reranker = None
+            self.reranker_tokenizer = None
+            self.reranker_session = None
             self.has_reranker = False
         
         self.collection = None
@@ -51,11 +65,54 @@ class RetrievalService:
             connect_kwargs['password'] = MILVUS_PASSWORD
         if MILVUS_TOKEN:
             connect_kwargs['token'] = MILVUS_TOKEN
-        connections.connect(**connect_kwargs, collection_name=collection_name)
+        connections.connect(**connect_kwargs)
+        
+    def _encode_text(self, text: str) -> List[float]:
+        """Encode text using ONNX embedding model"""
+        if not self.has_embedding_model:
+            raise ValueError("Embedding model not loaded")
+            
+        inputs = self.embedding_tokenizer(
+            text, 
+            return_tensors="np", 
+            padding=True, 
+            truncation=True, 
+            max_length=512
+        )
+        
+        onnx_inputs = {
+            "input_ids": inputs["input_ids"].astype(np.int64),
+            "attention_mask": inputs["attention_mask"].astype(np.int64)
+        }
+        
+        if "token_type_ids" in inputs:
+            onnx_inputs["token_type_ids"] = inputs["token_type_ids"].astype(np.int64)
+        
+        # Get outputs from the ONNX model
+        outputs = self.embedding_session.run(None, onnx_inputs)
+        
+        # Use mean pooling over token embeddings
+        embedding = outputs[0][0].mean(axis=0)
+        
+        # Normalize the embedding
+        norm = np.linalg.norm(embedding)
+        normalized_embedding = (embedding / norm) if norm != 0 else embedding
+        
+        return normalized_embedding.tolist()
         
     def create_collection(self, collection_name: str):
-        sample_embedding = self.embedding_model.encode(["test"])
-        embedding_dim = len(sample_embedding[0])
+        # Get embedding dimension from a sample
+        if not self.has_embedding_model:
+            # Default dimension for BGE base ONNX model (768 for bge-base-en-v1.5)
+            embedding_dim = 768
+        else:
+            try:
+                sample_embedding = self._encode_text("test")
+                embedding_dim = len(sample_embedding)
+            except Exception as e:
+                logger.warning(f"Error getting embedding dimension: {e}")
+                # Fallback to common dimensions
+                embedding_dim = 768
         
         fields = [
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=100),
@@ -77,7 +134,28 @@ class RetrievalService:
         schema = CollectionSchema(fields, "Repository content with semantic chunking")
         
         if utility.has_collection(collection_name):
-            self.collection = Collection(collection_name)
+            # Check if existing collection has matching dimension
+            existing_collection = Collection(collection_name)
+            existing_dim = None
+            for field in existing_collection.schema.fields:
+                if field.name == "embedding":
+                    existing_dim = field.params.get('dim')
+                    break
+            
+            if existing_dim != embedding_dim:
+                logger.info(f"Dimension mismatch: existing collection has {existing_dim}, but model produces {embedding_dim}")
+                logger.info("Dropping and recreating collection...")
+                utility.drop_collection(collection_name)
+                self.collection = Collection(collection_name, schema)
+                
+                index_params = {
+                    "metric_type": "COSINE",
+                    "index_type": "IVF_FLAT",
+                    "params": {"nlist": 1024}
+                }
+                self.collection.create_index("embedding", index_params)
+            else:
+                self.collection = existing_collection
         else:
             self.collection = Collection(collection_name, schema)
             
@@ -96,8 +174,19 @@ class RetrievalService:
             
         self.collection.load()
         
-        query_embedding = self.embedding_model.encode([query]).tolist()
-        search_params = {"metric_type": "COSINE", "params": {"nprobe": 16}}
+        # Use ONNX embedding model
+        if not self.has_embedding_model:
+            raise ValueError("Embedding model not loaded")
+            
+        embedding = self._encode_text(query)
+        
+        # Convert to numpy array with correct shape (1, embedding_dim)
+        query_embedding = np.array([embedding], dtype=np.float32)
+        
+        # Verify the shape is correct
+        if query_embedding.ndim != 2:
+            query_embedding = query_embedding.reshape(1, -1)
+        search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
         
         output_fields = ["document"]
         enhanced_fields = [
@@ -140,7 +229,8 @@ class RetrievalService:
                 "documents": [[]],
                 "metadatas": [[]],
                 "distances": [[]],
-                "total_found": 0
+                "total_found": 0,
+                "filtered_results": 0
             }
         
         hits = results[0]
@@ -186,8 +276,29 @@ class RetrievalService:
         
         if self.has_reranker:
             try:
-                pairs = [(query, doc) for doc in documents]
-                rerank_scores = self.reranker.predict(pairs, show_progress_bar=False)
+                # Prepare sentence pairs for reranking
+                sentence_pairs = [(query, doc) for doc in documents]
+                
+                # Tokenize inputs
+                inputs = self.reranker_tokenizer(
+                    sentence_pairs,
+                    padding=True,
+                    truncation=True,
+                    return_tensors='np',
+                    max_length=512
+                )
+                
+                # Run ONNX inference
+                outputs = self.reranker_session.run(
+                    None,
+                    {
+                        'input_ids': inputs['input_ids'].astype(np.int64),
+                        'attention_mask': inputs['attention_mask'].astype(np.int64),
+                        'token_type_ids': inputs['token_type_ids'].astype(np.int64)
+                    }
+                )
+                
+                rerank_scores = outputs[0].flatten()
             except Exception as e:
                 logger.warning(f"Reranking failed: {e}")
 
