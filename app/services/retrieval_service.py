@@ -57,32 +57,7 @@ class RetrievalService:
             except Exception as e:
                 return False
 
-        # First attempt: connect to remote/hosted Milvus
-        connect_kwargs = {
-            'alias': "default",
-            'timeout': 30
-        }
-
-        if MILVUS_URI:
-            connect_kwargs['uri'] = MILVUS_URI
-        else:
-            connect_kwargs['host'] = MILVUS_HOST
-            connect_kwargs['port'] = MILVUS_PORT
-
-        if MILVUS_USER:
-            connect_kwargs['user'] = MILVUS_USER
-        if MILVUS_PASSWORD:
-            connect_kwargs['password'] = MILVUS_PASSWORD
-        if MILVUS_TOKEN:
-            connect_kwargs['token'] = MILVUS_TOKEN
-
-        if try_connect(**connect_kwargs):
-            print("Connected to the hosted Milvus vector store.")
-            return
-
-        print("Could not connect to the hosted Milvus vector store. Falling back to local Milvus...")
-
-        # Second attempt: fallback to localhost
+        
         local_kwargs = {
             'alias': "default",
             'host': "localhost",
@@ -96,8 +71,7 @@ class RetrievalService:
 
         # Final fallback
         print("Could not connect to any Milvus instance (hosted or local).")
-        print("You currently do not have the knowledge persisted on your machine.")
-        print("Please run `/persist-knowledge` to host your knowledge locally.")
+        print("Please ensure Milvus is running locally or check your connection settings.")
         
     def _encode_text(self, text: str) -> List[float]:
         """Encode text using ONNX embedding model"""
@@ -181,7 +155,7 @@ class RetrievalService:
                 self.collection = Collection(collection_name, schema)
                 
                 index_params = {
-                    "metric_type": "COSINE",
+                    "metric_type": "L2",
                     "index_type": "IVF_FLAT",
                     "params": {"nlist": 1024}
                 }
@@ -192,7 +166,7 @@ class RetrievalService:
             self.collection = Collection(collection_name, schema)
             
             index_params = {
-                "metric_type": "COSINE",
+                "metric_type": "L2",
                 "index_type": "IVF_FLAT",
                 "params": {"nlist": 1024}
             }
@@ -218,7 +192,7 @@ class RetrievalService:
         # Verify the shape is correct
         if query_embedding.ndim != 2:
             query_embedding = query_embedding.reshape(1, -1)
-        search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
+        search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
         
         output_fields = ["document"]
         enhanced_fields = [

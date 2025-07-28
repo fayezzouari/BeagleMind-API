@@ -11,3 +11,4 @@ onnx
 app/data
 .env
 app/scripts
+volumes

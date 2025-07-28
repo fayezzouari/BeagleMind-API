@@ -3,7 +3,7 @@ from app.routes.retrieval import router as retrieval_router
 
 app = FastAPI(
     title="Information Retrieval API",
-    description="API for semantic document retrieval using Milvus and sentence transformers",
+    description="API for semantic document retrieval using Milvus and ONNX embeddings",
     version="1.0.0"
 )
 

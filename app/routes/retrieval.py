@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import RetrieveRequest, RetrieveResponse
 from app.services.retrieval_service import RetrievalService
-from app.services.persist_knowledge_service import export_collection, ensure_milvus_docker, import_to_local
+from app.services.persist_knowledge_service import export_collection, import_to_local
+from pymilvus import connections, utility, Collection
+import os
 
 router = APIRouter()
 retrieval_services = {}
@@ -51,36 +53,52 @@ async def retrieve(request: RetrieveRequest):
 @router.post("/persist-knowledge")
 async def persist_knowledge():
     """
-    Persist knowledge by migrating collection from remote Milvus to local Docker instance
+    Check if beaglemind_col collection exists in local Milvus, if not, migrate it from remote.
     """
     try:
-        COLLECTION = "beaglemind_col"
+        # Connect to local Milvus
+        milvus_host =  "standalone"
+        milvus_port =  19530
         
-        # Export collection from remote
-        exported = export_collection(COLLECTION)
+        connections.connect(
+            alias="local_check",
+            host=milvus_host,
+            port=milvus_port,
+            timeout=30
+        )
+        
+        collection_name = "beaglemind_col"
+        print(f"Checking if collection '{collection_name}' exists in local Milvus...")
+        # Check if collection exists
+        if utility.has_collection(collection_name, using="local_check"):
+            print(f"Collection '{collection_name}' exists. Dropping it before migration...")
+            Collection(collection_name, using="local_check").drop()
+        # Collection doesn't exist or has been dropped, perform migration
+        print("Starting migration...")
+        
+        # Export from remote
+        exported = export_collection(collection_name)
         
         if not exported:
-            raise HTTPException(status_code=404, detail="No records found to migrate")
+            raise HTTPException(status_code=404, detail="No records found in remote collection to migrate")
         
         # Validate embedding structure
         emb = exported[0].get("embedding")
         if not isinstance(emb, list):
-            raise HTTPException(status_code=400, detail="Embedding field not found or invalid")
+            raise HTTPException(status_code=400, detail="Embedding field not found or invalid in remote collection")
         
         embedding_dim = len(emb)
         
-        # Ensure local Milvus Docker is running
-        ensure_milvus_docker()
-        
-        # Import to local instance
-        import_to_local(COLLECTION, exported, embedding_dim)
+        # Import to local
+        import_to_local(collection_name, exported, embedding_dim)
         
         return {
             "status": "success",
-            "message": "Migration finished successfully",
-            "collection": COLLECTION,
+            "message": "Migration completed successfully",
+            "collection": collection_name,
             "records_migrated": len(exported),
-            "embedding_dimension": embedding_dim
+            "embedding_dimension": embedding_dim,
+            "action": "migrated_from_remote"
         }
         
     except Exception as e:

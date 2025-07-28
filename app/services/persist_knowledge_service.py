@@ -1,35 +1,14 @@
 # migrate_zilliz_collection.py
-import subprocess, time, json
+import json, os
 from pymilvus import connections, Collection, utility, FieldSchema, CollectionSchema, DataType
-from config import MILVUS_URI, MILVUS_TOKEN
+import dotenv
 
-CONTAINER_NAME = "milvus"
-IMAGE_NAME = "milvusdb/milvus:latest"
-LOCAL_HOST = "localhost"
-LOCAL_PORT = "19530"
+dotenv.load_dotenv()
+MILVUS_URI = os.getenv("MILVUS_URI")
+MILVUS_TOKEN = os.getenv("MILVUS_TOKEN")
 
-def ensure_milvus_docker():
-    res = subprocess.run(["docker", "inspect", CONTAINER_NAME],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if res.returncode == 0:
-        state = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", CONTAINER_NAME],
-                               capture_output=True, text=True).stdout.strip()
-        if state != "running":
-            print("Starting existing Milvus container...")
-            subprocess.run(["docker", "start", CONTAINER_NAME], check=True)
-        else:
-            print("Milvus container is already running.")
-    else:
-        print("Pulling and running Milvus container...")
-        subprocess.run(["docker", "pull", IMAGE_NAME], check=True)
-        subprocess.run([
-            "docker", "run", "-d",
-            "--name", CONTAINER_NAME,
-            "-p", f"{LOCAL_PORT}:19530",
-            IMAGE_NAME
-        ], check=True)
-    print("Waiting for local Milvus to be ready...")
-    time.sleep(10)
+LOCAL_HOST = "standalone"
+LOCAL_PORT = 19530
 
 def export_collection(name, batch_size=1000):
     connections.connect(alias="src", uri=MILVUS_URI, token=MILVUS_TOKEN)
@@ -48,10 +27,13 @@ def export_collection(name, batch_size=1000):
     return results
 
 def import_to_local(name, records, embedding_dim):
-    connections.connect(alias="dest", host=LOCAL_HOST, port=LOCAL_PORT)
-    if utility.has_collection(name, using="dest"):
+    # Connect to local Milvus (could be Docker container)
+    milvus_host = LOCAL_HOST
+    milvus_port = LOCAL_PORT
+    connections.connect(alias="default", host=milvus_host, port=milvus_port, timeout=30)
+    if utility.has_collection(name, using="default"):
         print(f"Dropping existing local collection '{name}'")
-        Collection(name, using="dest").drop()
+        Collection(name, using="default").drop()
     fields = [
         FieldSchema("id", DataType.VARCHAR, is_primary=True, max_length=100),
         FieldSchema("document", DataType.VARCHAR, max_length=65535),
@@ -68,30 +50,29 @@ def import_to_local(name, records, embedding_dim):
         FieldSchema("semantic_density_score", DataType.FLOAT),
         FieldSchema("information_value_score", DataType.FLOAT),
     ]
-    schema = CollectionSchema(fields, description="Migrated collection")
-    dest = Collection(name, schema=schema, using="dest")
-    dest.create_index("embedding", index_params={"index_type": "IVF_FLAT", "metric_type": "L2", "params": {"nlist": 128}})
-    dest.load()
+    schema = CollectionSchema(fields, "Enhanced repository content with semantic chunking and image metadata")
+    default = Collection(name, schema=schema, using="default")
+    default.create_index("embedding", index_params={"index_type": "IVF_FLAT", "metric_type": "L2", "params": {"nlist": 128}})
+    default.load()
     print(f"Inserting {len(records)} records into local '{name}'...")
-    rows = []
-    for rec in records:
-        rows.append([
-            rec.get("id"),
-            rec.get("document"),
-            rec.get("embedding"),
-            rec.get("file_name"),
-            rec.get("file_path"),
-            rec.get("file_type"),
-            rec.get("source_link"),
-            rec.get("chunk_index"),
-            rec.get("language"),
-            rec.get("has_code"),
-            rec.get("repo_name"),
-            rec.get("content_quality_score"),
-            rec.get("semantic_density_score"),
-            rec.get("information_value_score"),
-        ])
-    dest.insert(rows)
+    # Build columnar data for Milvus
+    entities = [
+        [rec.get("id") for rec in records],
+        [rec.get("document") for rec in records],
+        [rec.get("embedding") for rec in records],
+        [rec.get("file_name") for rec in records],
+        [rec.get("file_path") for rec in records],
+        [rec.get("file_type") for rec in records],
+        [rec.get("source_link") for rec in records],
+        [rec.get("chunk_index") for rec in records],
+        [rec.get("language") for rec in records],
+        [rec.get("has_code") for rec in records],
+        [rec.get("repo_name") for rec in records],
+        [rec.get("content_quality_score") for rec in records],
+        [rec.get("semantic_density_score") for rec in records],
+        [rec.get("information_value_score") for rec in records],
+    ]
+    default.insert(entities)
     print("Import complete.")
 
 if __name__ == "__main__":
@@ -102,7 +83,6 @@ if __name__ == "__main__":
         if not isinstance(emb, list):
             raise ValueError("Embedding field not found or invalid")
         embedding_dim = len(emb)
-        ensure_milvus_docker()
         import_to_local(COLLECTION, exported, embedding_dim)
         print("Migration finished successfully.")
     else:
