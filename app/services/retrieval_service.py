@@ -49,23 +49,55 @@ class RetrievalService:
         
         self.collection = None
         
-    def connect_to_milvus(self, collection_name: str):
+    def connect_to_milvus(self):
+        def try_connect(**kwargs):
+            try:
+                connections.connect(**kwargs)
+                return True
+            except Exception as e:
+                return False
+
+        # First attempt: connect to remote/hosted Milvus
         connect_kwargs = {
             'alias': "default",
             'timeout': 30
         }
+
         if MILVUS_URI:
             connect_kwargs['uri'] = MILVUS_URI
         else:
             connect_kwargs['host'] = MILVUS_HOST
             connect_kwargs['port'] = MILVUS_PORT
+
         if MILVUS_USER:
             connect_kwargs['user'] = MILVUS_USER
         if MILVUS_PASSWORD:
             connect_kwargs['password'] = MILVUS_PASSWORD
         if MILVUS_TOKEN:
             connect_kwargs['token'] = MILVUS_TOKEN
-        connections.connect(**connect_kwargs)
+
+        if try_connect(**connect_kwargs):
+            print("Connected to the hosted Milvus vector store.")
+            return
+
+        print("Could not connect to the hosted Milvus vector store. Falling back to local Milvus...")
+
+        # Second attempt: fallback to localhost
+        local_kwargs = {
+            'alias': "default",
+            'host': "localhost",
+            'port': "19530",
+            'timeout': 30
+        }
+
+        if try_connect(**local_kwargs):
+            print("✅ Connected to the local Milvus vector store.")
+            return
+
+        # Final fallback
+        print("Could not connect to any Milvus instance (hosted or local).")
+        print("You currently do not have the knowledge persisted on your machine.")
+        print("Please run `/persist-knowledge` to host your knowledge locally.")
         
     def _encode_text(self, text: str) -> List[float]:
         """Encode text using ONNX embedding model"""

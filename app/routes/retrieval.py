@@ -13,7 +13,7 @@ async def retrieve(request: RetrieveRequest):
     if request.collection_name not in retrieval_services:
         try:
             retrieval_service = RetrievalService()
-            retrieval_service.connect_to_milvus(request.collection_name)
+            retrieval_service.connect_to_milvus()
             retrieval_service.create_collection(request.collection_name)
             retrieval_services[request.collection_name] = retrieval_service
         except Exception as e:
