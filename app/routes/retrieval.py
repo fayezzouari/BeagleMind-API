@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import RetrieveRequest, RetrieveResponse
 from app.services.retrieval_service import RetrievalService
+from app.services.persist_knowledge_service import export_collection, ensure_milvus_docker, import_to_local
 
 router = APIRouter()
 retrieval_services = {}
@@ -45,3 +46,42 @@ async def retrieve(request: RetrieveRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Retrieval failed: {str(e)}")
+
+
+@router.post("/persist-knowledge")
+async def persist_knowledge():
+    """
+    Persist knowledge by migrating collection from remote Milvus to local Docker instance
+    """
+    try:
+        COLLECTION = "beaglemind_col"
+        
+        # Export collection from remote
+        exported = export_collection(COLLECTION)
+        
+        if not exported:
+            raise HTTPException(status_code=404, detail="No records found to migrate")
+        
+        # Validate embedding structure
+        emb = exported[0].get("embedding")
+        if not isinstance(emb, list):
+            raise HTTPException(status_code=400, detail="Embedding field not found or invalid")
+        
+        embedding_dim = len(emb)
+        
+        # Ensure local Milvus Docker is running
+        ensure_milvus_docker()
+        
+        # Import to local instance
+        import_to_local(COLLECTION, exported, embedding_dim)
+        
+        return {
+            "status": "success",
+            "message": "Migration finished successfully",
+            "collection": COLLECTION,
+            "records_migrated": len(exported),
+            "embedding_dimension": embedding_dim
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Knowledge persistence failed: {str(e)}")
