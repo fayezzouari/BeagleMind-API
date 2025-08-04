@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from app.routes.retrieval import router as retrieval_router
+from app.routes.github_ingestion import router as github_ingestion_router
 
 app = FastAPI(
     title="Information Retrieval API",
@@ -8,7 +9,7 @@ app = FastAPI(
 )
 
 app.include_router(retrieval_router, prefix="/api", tags=["retrieval"])
-
+app.include_router(github_ingestion_router, prefix="/api", tags=["github_ingestion"])
 
 @app.get("/")
 async def root():

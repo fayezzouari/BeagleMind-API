@@ -8,14 +8,7 @@ import onnxruntime as ort
 from transformers import AutoTokenizer
 import numpy as np
 import os
-from app.config import (
-    MILVUS_HOST,
-    MILVUS_PORT,
-    MILVUS_USER,
-    MILVUS_PASSWORD,
-    MILVUS_TOKEN,
-    MILVUS_URI
-)
+
 
 
 logging.basicConfig(level=logging.CRITICAL)
@@ -312,34 +305,12 @@ class RetrievalService:
         for i, hit in enumerate(hits):
             semantic_score = 1 - hit.distance
             
-            quality_score = hit.entity.get("content_quality_score", 0.5)
-            semantic_density = hit.entity.get("semantic_density_score", 0.5)
-            info_value = hit.entity.get("information_value_score", 0.5)
-            
             if rerank_scores is not None:
-                rerank_score = rerank_scores[i]
-                composite_score = (
-                    rerank_score * 0.5 +
-                    semantic_score * 0.2 +
-                    quality_score * 0.1 +
-                    semantic_density * 0.1 +
-                    info_value * 0.1
-                )
+                score = rerank_scores[i]
             else:
-                query_terms = set(re.findall(r'\b\w+\b', query.lower()))
-                doc_text = documents[i].lower()
-                doc_terms = set(re.findall(r'\b\w+\b', doc_text))
-                keyword_overlap = len(query_terms.intersection(doc_terms)) / max(len(query_terms), 1)
-                
-                composite_score = (
-                    semantic_score * 0.4 +
-                    keyword_overlap * 0.3 +
-                    quality_score * 0.1 +
-                    semantic_density * 0.1 +
-                    info_value * 0.1
-                )
+                score = semantic_score
             
-            scored_hits.append((composite_score, hit))
+            scored_hits.append((score, hit))
         
         scored_hits.sort(key=lambda x: x[0], reverse=True)
         return [hit for _, hit in scored_hits[:n_results]]
