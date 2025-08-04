@@ -10,5 +10,4 @@ app/services/search_vectorstore.py
 onnx
 app/data
 .env
-app/scripts
 volumes
