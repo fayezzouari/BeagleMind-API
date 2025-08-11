@@ -6,6 +6,8 @@ This service handles the ingestion of GitHub repositories into Milvus collection
 """
 
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
 from app.scripts.github_ingestor import GitHubDirectIngester
 
@@ -16,44 +18,40 @@ class GitHubIngestionService:
     
     def __init__(self):
         self.ingesters = {}  # Cache ingesters by collection name
+        self.executor = ThreadPoolExecutor(max_workers=2)  # Limit concurrent ingestions
     
     def get_or_create_ingester(self, collection_name: str) -> GitHubDirectIngester:
         """Get existing ingester or create new one for collection."""
         if collection_name not in self.ingesters:
+            logger.info(f"[SERVICE] Creating new ingester for collection: {collection_name}")
             self.ingesters[collection_name] = GitHubDirectIngester(
                 collection_name=collection_name,
                 model_name="BAAI/bge-base-en-v1.5"
             )
+        else:
+            logger.info(f"[SERVICE] Using existing ingester for collection: {collection_name}")
         return self.ingesters[collection_name]
     
-    async def ingest_repository(self, collection_name: str, github_url: str, 
-                              branch: str = "main") -> Dict[str, Any]:
+    def _sync_ingest_repository(self, collection_name: str, github_url: str, 
+                               branch: str = "main") -> Dict[str, Any]:
         """
-        Ingest a GitHub repository into the specified collection.
-        
-        Args:
-            collection_name: Name of the Milvus collection
-            github_url: GitHub repository URL
-            branch: Repository branch to ingest
-            
-        Returns:
-            Dictionary with success status and ingestion results
+        Synchronous repository ingestion - runs in thread pool.
         """
         try:
-            logger.info(f"Starting ingestion for {github_url} into collection {collection_name}")
+            logger.info(f"[SERVICE] Thread started for ingesting {github_url}")
             
             # Get or create ingester for this collection
             ingester = self.get_or_create_ingester(collection_name)
             
-            # Ingest repository
+            # Ingest repository (this is the blocking operation)
             result = ingester.ingest_repository(
                 repo_url=github_url,
                 branch=branch,
-                max_workers=8
+                max_workers=4  # Reduced to avoid overwhelming the system
             )
             
             if result['success']:
-                logger.info(f"Successfully ingested {github_url} into {collection_name}")
+                logger.info(f"[SERVICE] Thread completed successfully for {github_url}")
                 return {
                     "success": True,
                     "message": f"Successfully ingested repository into collection '{collection_name}'",
@@ -66,14 +64,60 @@ class GitHubIngestionService:
                     }
                 }
             else:
-                logger.error(f"Failed to ingest {github_url}: {result.get('message', 'Unknown error')}")
+                logger.error(f"[SERVICE] Thread failed for {github_url}: {result.get('message', 'Unknown error')}")
                 return {
                     "success": False,
                     "message": f"Failed to ingest repository: {result.get('message', 'Unknown error')}"
                 }
                 
         except Exception as e:
-            logger.error(f"Error during repository ingestion: {e}")
+            logger.error(f"[SERVICE] Thread exception for {github_url}: {e}")
+            return {
+                "success": False,
+                "message": f"Error during ingestion: {str(e)}"
+            }
+    
+    async def ingest_repository(self, collection_name: str, github_url: str, 
+                              branch: str = "main") -> Dict[str, Any]:
+        """
+        Ingest a GitHub repository into the specified collection.
+        
+        This method runs the blocking ingestion in a thread pool to avoid
+        blocking the FastAPI event loop.
+        
+        Args:
+            collection_name: Name of the Milvus collection
+            github_url: GitHub repository URL
+            branch: Repository branch to ingest
+            
+        Returns:
+            Dictionary with success status and ingestion results
+        """
+        logger.info(f"[SERVICE START] Repository: {github_url}, Collection: {collection_name}, Branch: {branch}")
+        
+        try:
+            # Run the blocking ingestion in a thread pool
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self.executor,
+                self._sync_ingest_repository,
+                collection_name,
+                github_url,
+                branch
+            )
+            
+            if result["success"]:
+                logger.info(f"[SERVICE SUCCESS] Repository {github_url} successfully processed")
+                logger.info(f"[SERVICE STATS] Files processed: {result.get('stats', {}).get('files_processed', 0)}, "
+                           f"Chunks generated: {result.get('stats', {}).get('chunks_generated', 0)}")
+            else:
+                logger.error(f"[SERVICE FAILED] Repository {github_url}: {result.get('message', 'Unknown error')}")
+            
+            return result
+                
+        except Exception as e:
+            logger.error(f"[SERVICE ERROR] Critical error during repository ingestion: {e}")
+            logger.error(f"[SERVICE ERROR] Repository: {github_url}, Collection: {collection_name}")
             return {
                 "success": False,
                 "message": f"Error during ingestion: {str(e)}"

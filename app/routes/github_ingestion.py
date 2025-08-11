@@ -33,10 +33,11 @@ async def ingest_github_repository(
         IngestionResponse with success status and details
     """
     try:
-        logger.info(f"Received ingestion request for {request.github_url} into {request.collection_name}")
+        logger.info(f"[ROUTER] Received ingestion request for {request.github_url} into {request.collection_name}")
         
         # Validate collection name
         if not request.collection_name or len(request.collection_name.strip()) == 0:
+            logger.error(f"[ROUTER] Invalid collection name: '{request.collection_name}'")
             raise HTTPException(
                 status_code=400,
                 detail="Collection name cannot be empty"
@@ -47,17 +48,22 @@ async def ingest_github_repository(
         
         # Validate GitHub URL format
         if not github_url_str.startswith("https://github.com/"):
+            logger.error(f"[ROUTER] Invalid GitHub URL: {github_url_str}")
             raise HTTPException(
                 status_code=400,
                 detail="Invalid GitHub URL. Must start with https://github.com/"
             )
         
-        # Start ingestion (this runs synchronously for now)
+        logger.info(f"[ROUTER] Starting ingestion process...")
+        
+        # Start ingestion (now runs in thread pool to avoid blocking)
         result = await github_ingestion_service.ingest_repository(
             collection_name=request.collection_name,
             github_url=github_url_str,
             branch=request.branch
         )
+        
+        logger.info(f"[ROUTER] Ingestion process completed with success: {result['success']}")
         
         if result["success"]:
             return IngestionResponse(
@@ -74,7 +80,7 @@ async def ingest_github_repository(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error during ingestion: {e}")
+        logger.error(f"[ROUTER] Unexpected error during ingestion: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"

@@ -18,9 +18,13 @@ logger.setLevel(logging.CRITICAL)
 
 class RetrievalService:
     def __init__(self):
-        # Initialize embedding model with ONNX
+        # Initialize embedding model with ONNX (offline mode)
         try:
-            self.embedding_tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-base-en-v1.5")
+            # Use local tokenizer files instead of downloading from HuggingFace
+            self.embedding_tokenizer = AutoTokenizer.from_pretrained(
+                "onnx/", 
+                local_files_only=True
+            )
             self.embedding_session = ort.InferenceSession("onnx/model.onnx")
             self.has_embedding_model = True
         except Exception as e:
@@ -29,9 +33,13 @@ class RetrievalService:
             self.embedding_session = None
             self.has_embedding_model = False
         
-        # Initialize reranker model with ONNX
+        # Initialize reranker model with ONNX (offline mode)
         try:
-            self.reranker_tokenizer = AutoTokenizer.from_pretrained('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            # Use local tokenizer files for cross-encoder as well
+            self.reranker_tokenizer = AutoTokenizer.from_pretrained(
+                "onnx/", 
+                local_files_only=True
+            )
             self.reranker_session = ort.InferenceSession("onnx/cross_encoder.onnx")
             self.has_reranker = True
         except Exception as e:
@@ -44,7 +52,11 @@ class RetrievalService:
         
     def connect_to_milvus(self):
         def try_connect(**kwargs):
-            try:
+            try:                
+                try:
+                    connections.disconnect("default")
+                except:
+                    pass
                 connections.connect(**kwargs)
                 return True
             except Exception as e:

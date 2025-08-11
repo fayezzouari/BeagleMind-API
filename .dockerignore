@@ -12,6 +12,8 @@ __pycache__/
 env/
 venv/
 ENV/
+.build/
+.dist/
 
 # IDE
 .vscode/
@@ -39,3 +41,20 @@ models/
 # Temporary files
 *.tmp
 *.temp
+
+# Default ignores
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.Python
+env/
+venv/
+.build
+.dist
+.git
+.gitignore
+
+# Explicitly include wheelhouse for offline installs
+!wheelhouse/**
