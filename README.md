@@ -32,59 +32,15 @@ rag_api/
 
 ## Milvus Setup (required)
 
-Run Milvus locally with Docker Compose:
+Run Milvus locally:
 
-```yaml
-# docker-compose.milvus.yml
-version: "3.8"
-services:
-    etcd:
-        image: quay.io/coreos/etcd:v3.5.18
-        environment:
-            - ETCD_AUTO_COMPACTION_MODE=revision
-            - ETCD_AUTO_COMPACTION_RETENTION=1000
-            - ETCD_QUOTA_BACKEND_BYTES=4294967296
-            - ETCD_SNAPSHOT_COUNT=50000
-        volumes:
-            - ./volumes/etcd:/etcd
-        command: ["etcd", "-advertise-client-urls", "http://etcd:2379", "-listen-client-urls", "http://0.0.0.0:2379", "-listen-peer-urls", "http://0.0.0.0:2380"]
-
-    minio:
-        image: minio/minio:RELEASE.2024-05-28T17-19-04Z
-        environment:
-            - MINIO_ACCESS_KEY=minioadmin
-            - MINIO_SECRET_KEY=minioadmin
-        volumes:
-            - ./volumes/minio:/minio_data
-        command: ["server", "/minio_data"]
-        ports:
-            - "9000:9000"
-            - "9001:9001"
-
-    milvus:
-        image: milvusdb/milvus:v2.6.0
-        depends_on: [etcd, minio]
-        environment:
-            - ETCD_ENDPOINTS=etcd:2379
-            - MINIO_ADDRESS=minio:9000
-        ports:
-            - "19530:19530"
-            - "9091:9091"
-        volumes:
-            - ./volumes/milvus:/var/lib/milvus
-        command: ["milvus", "run", "standalone"]
-```
-
-Bring up Milvus:
 
 ```bash
-docker compose -f docker-compose.milvus.yml up -d
-```
+# Download the installation script
+curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
 
-Health check:
-
-```bash
-curl -s http://localhost:9091/healthz
+# Start the Docker container
+bash standalone_embed.sh start
 ```
 
 ## Installation (local)
@@ -105,28 +61,6 @@ If running Milvus on Linux host, use `--network host` or set `MILVUS_HOST=localh
 
 ## API Endpoints
 
-### 1. Initialize Retrieval System
-
-**POST** `/api/v1/initialize`
-
-Initialize the Milvus collection and embedding models.
-
-**Request Body:**
-```json
-{
-    "collection_name": "beaglemind_col"
-}
-```
-
-**Response:**
-```json
-{
-    "success": true,
-    "message": "Retrieval system initialized successfully",
-    "collection_name": "beaglemind_col"
-}
-```
-
 ### 1) Retrieve Documents
 
 POST `/api/retrieve`
@@ -139,7 +73,8 @@ Search for documents using semantic similarity.
     "query": "machine learning algorithms",
     "n_results": 10,
     "include_metadata": true,
-    "rerank": true
+    "rerank": true,
+    "collection_name":"beaglemind_col"
 }
 ```
 
@@ -243,8 +178,3 @@ Returns API health status:
 }
 ```
 
-## API Documentation
-
-Interactive API documentation is available at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`

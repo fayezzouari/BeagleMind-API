@@ -11,3 +11,4 @@ onnx
 app/data
 .env
 volumes
+app/services/persist_knowledge_service.py
