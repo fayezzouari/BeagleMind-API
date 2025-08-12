@@ -60,51 +60,26 @@ docker run -d --name beaglemind-api \
 
 If running Milvus on Linux host, use `--network host` or set `MILVUS_HOST=localhost` and add `--add-host=host.docker.internal:host-gateway` if needed.
 
-## API Endpoints
+## User Guide: End‑to‑End Workflow
 
-### 1) Retrieve Documents
+This guide walks you through checking the API health, ingesting the official BeagleBoard documentation repository, monitoring ingestion status, and finally performing a semantic retrieval query.
 
-POST `/api/retrieve`
+### 1. Health Check (ensure API is running)
 
-Search for documents using semantic similarity.
+GET `/health`
 
-**Request Body:**
+Expected response:
 ```json
-{
-    "query": "Blinking LEDs",
-    "n_results": 10,
-    "include_metadata": true,
-    "rerank": true,
-    "collection_name":"beaglemind_col"
-}
+{ "status": "healthy" }
 ```
 
-**Response:**
-```json
-{
-    "documents": [["Document text 1", "Document text 2", ...]],
-    "metadatas": [[
-        {
-            "score": 0.95,
-            "distance": 0.05,
-            "file_name": "example.txt",
-            "file_path": "/path/to/file",
-            "chunk_index": 0,
-            "language": "python",
-            "has_code": true
-        }
-    ]],
-    "distances": [[0.05, 0.08, ...]],
-    "total_found": 100,
-    "filtered_results": 10
-}
-```
+### 2. Ingest the BeagleBoard Documentation Repository
 
-### 2) Ingest GitHub Repository into a Collection
+Use the GitHub repo: `https://github.com/beagleboard/docs.beagleboard.io` (branch `main`).
 
 POST `/api/ingest-data`
 
-Body:
+Request body:
 ```json
 {
     "collection_name": "beaglemind_col",
@@ -113,7 +88,7 @@ Body:
 }
 ```
 
-Response:
+Successful ingestion response (fields will vary):
 ```json
 {
     "success": true,
@@ -129,14 +104,18 @@ Response:
 ```
 
 Notes:
-- If the collection exists, new content is appended.
-- Progress logs show in the API console.
+* Re‑ingesting the same repo appends new/changed content (no automatic dedupe by hash—add if needed).
+* Progress is logged with tags like `[FETCH]`, `[PROCESS]`, `[EMBEDDINGS]`, `[STORAGE]`, `[SERVICE]`, `[ROUTER]`.
+* Tail logs during ingestion:
+    ```bash
+    tail -f app.log
+    ```
 
-### 3) Ingestion Service Status
+### 3. Check Ingestion Service Status
 
 GET `/api/ingest-data/status`
 
-Response:
+Sample response:
 ```json
 {
     "success": true,
@@ -144,6 +123,60 @@ Response:
     "active_collections": 1
 }
 ```
+
+### 4. Retrieve Documents (Semantic Search + Optional Rerank)
+
+POST `/api/retrieve`
+
+Request body:
+```json
+{
+    "query": "Blink an LED on BeagleBone",
+    "n_results": 5,
+    "include_metadata": true,
+    "rerank": true,
+    "collection_name": "beaglemind_col"
+}
+```
+
+Sample response (truncated):
+```json
+{
+    "documents": [["...chunk text...", "...chunk text..." ]],
+    "metadatas": [[
+        {
+            "score": 0.95,
+            "distance": 0.05,
+            "file_name": "getting-started.md",
+            "file_path": "docs/getting-started.md",
+            "chunk_index": 0,
+            "language": "markdown",
+            "has_code": false,
+            "repo_name": "docs.beagleboard.io"
+        }
+    ]],
+    "distances": [[0.05, 0.08]],
+    "total_found": 120,
+    "filtered_results": 2
+}
+```
+
+### 5. Swagger UI
+
+Browse interactive docs at: `http://localhost:8000/docs`
+
+---
+
+## Raw Endpoint Reference
+
+| Method | Path                    | Description                                   |
+|--------|-------------------------|-----------------------------------------------|
+| GET    | /health                 | Health probe                                  |
+| POST   | /api/ingest-data        | Ingest a GitHub repo into a Milvus collection |
+| GET    | /api/ingest-data/status | Ingestion service status                      |
+| POST   | /api/retrieve           | Semantic search + (optional) rerank           |
+
+---
 
 ## Models Used
 
@@ -158,24 +191,6 @@ Response:
 - Vector similarity search (L2/IVF_FLAT)
 - Configurable result filtering and ranking
 
-## Troubleshooting
-
-- "cannot create index on non-exist field": ensure indexes are created only on existing fields. Current schema fields are: id, document, embedding, file_name, file_path, file_type, source_link, chunk_index, language, has_code, repo_name, content_quality_score, semantic_density_score, information_value_score.
-- SSL errors during Docker builds: pre-download wheels on host or build with host network. See Dockerfile comments and consider a local wheelhouse.
-- No logs during ingestion: the service runs blocking work in a thread pool and logs to console and app.log. Tail logs with `tail -f app.log`.
-
 ## API Docs
 
 Swagger UI: `http://localhost:8000/docs`
-
-## Health Check
-
-**GET** `/health`
-
-Returns API health status:
-```json
-{
-    "status": "healthy"
-}
-```
-
