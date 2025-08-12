@@ -50,33 +50,75 @@ class RetrievalService:
         
         self.collection = None
         
-    def connect_to_milvus(self):
-        def try_connect(**kwargs):
-            try:                
+    def connect_to_milvus(self, force: bool = False):
+        """Establish a Milvus connection using env vars with retries.
+
+        Priority:
+          1. MILVUS_URI (cloud / standalone URI)
+          2. MILVUS_HOST + MILVUS_PORT (defaults localhost:19530)
+
+        Raises:
+            RuntimeError if connection cannot be established.
+        """
+        if not force:
+            # If already connected, avoid reconnect unless forced
+            try:
+                utility.list_collections()  # will fail if no connection
+                return
+            except Exception:
+                pass
+
+        host = os.getenv("MILVUS_HOST", "localhost")
+        port = os.getenv("MILVUS_PORT", "19530")
+        uri = os.getenv("MILVUS_URI")
+        user = os.getenv("MILVUS_USER")
+        password = os.getenv("MILVUS_PASSWORD")
+        token = os.getenv("MILVUS_TOKEN")
+
+        connect_attempts = []
+
+        if uri:
+            connect_attempts.append({
+                "alias": "default",
+                "uri": uri,
+                **({"user": user} if user else {}),
+                **({"password": password} if password else {}),
+                **({"token": token} if token else {}),
+                "timeout": 30
+            })
+
+        # Host/port attempt always appended (fallback / default)
+        connect_attempts.append({
+            "alias": "default",
+            "host": host,
+            "port": port,
+            **({"user": user} if user else {}),
+            **({"password": password} if password else {}),
+            **({"token": token} if token else {}),
+            "timeout": 30
+        })
+
+        last_error = None
+        for attempt_idx, params in enumerate(connect_attempts, start=1):
+            for retry in range(3):
                 try:
-                    connections.disconnect("default")
-                except:
-                    pass
-                connections.connect(**kwargs)
-                return True
-            except Exception as e:
-                return False
+                    try:
+                        connections.disconnect("default")
+                    except Exception:
+                        pass
+                    connections.connect(**params)
+                    # simple probe
+                    utility.list_collections()
+                    print(f"Connected to Milvus (attempt {attempt_idx}, retry {retry}) using params: "
+                          f"{('uri='+uri) if uri and 'uri' in params else f'{host}:{port}'}")
+                    return
+                except Exception as e:
+                    last_error = e
+                    if retry < 2:
+                        continue
+                    break  # move to next attempt set
 
-        
-        local_kwargs = {
-            'alias': "default",
-            'host': "localhost",
-            'port': "19530",
-            'timeout': 30
-        }
-
-        if try_connect(**local_kwargs):
-            print("✅ Connected to the local Milvus vector store.")
-            return
-
-        # Final fallback
-        print("Could not connect to any Milvus instance (hosted or local).")
-        print("Please ensure Milvus is running locally or check your connection settings.")
+        raise RuntimeError(f"Failed to connect to Milvus after retries: {last_error}")
         
     def _encode_text(self, text: str) -> List[float]:
         """Encode text using ONNX embedding model"""
@@ -112,6 +154,12 @@ class RetrievalService:
         return normalized_embedding.tolist()
         
     def create_collection(self, collection_name: str):
+        # Ensure connection first
+        try:
+            self.connect_to_milvus()
+        except Exception as e:
+            raise RuntimeError(f"Milvus connection not established: {e}")
+        
         # Get embedding dimension from a sample
         if not self.has_embedding_model:
             # Default dimension for BGE base ONNX model (768 for bge-base-en-v1.5)
@@ -142,8 +190,7 @@ class RetrievalService:
             FieldSchema(name="information_value_score", dtype=DataType.FLOAT),
         ]
         
-        schema = CollectionSchema(fields, "Repository content with semantic chunking")
-        
+        schema = CollectionSchema(fields, "Repository content with semantic chunking")       
         if utility.has_collection(collection_name):
             # Check if existing collection has matching dimension
             existing_collection = Collection(collection_name)

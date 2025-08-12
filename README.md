@@ -51,10 +51,11 @@ Milvus must be started separately (see above). This container only runs the API.
 
 ```bash
 docker build -t beaglemind-api .
-docker run --rm -p 8000:8000 \
-    -e MILVUS_HOST=host.docker.internal \
-    -e MILVUS_PORT=19530 \
-    beaglemind-api
+docker run -d --name beaglemind-api \
+  -p 8000:8000 \
+  -e MILVUS_HOST=host.docker.internal \
+  -e MILVUS_PORT=19530 \
+  beaglemind-api
 ```
 
 If running Milvus on Linux host, use `--network host` or set `MILVUS_HOST=localhost` and add `--add-host=host.docker.internal:host-gateway` if needed.
@@ -70,7 +71,7 @@ Search for documents using semantic similarity.
 **Request Body:**
 ```json
 {
-    "query": "machine learning algorithms",
+    "query": "Blinking LEDs",
     "n_results": 10,
     "include_metadata": true,
     "rerank": true,
@@ -107,7 +108,7 @@ Body:
 ```json
 {
     "collection_name": "beaglemind_col",
-    "github_url": "https://github.com/owner/repo",
+    "github_url": "https://github.com/beagleboard/docs.beagleboard.io",
     "branch": "main"
 }
 ```
