@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import RetrieveRequest, RetrieveResponse
 from app.services.retrieval_service import RetrievalService
-from app.services.persist_knowledge_service import export_collection, import_to_local
 from pymilvus import connections, utility, Collection
 import os
 
