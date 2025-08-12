@@ -1,6 +1,6 @@
-# Information Retrieval API
+# BeagleMind API (RAG)
 
-A FastAPI-based information retrieval system using Milvus vector database and sentence transformers for semantic search.
+FastAPI service for Retrieval-Augmented Generation workflows backed by Milvus vector store and ONNX models (offline-friendly).
 
 ## Project Structure
 
@@ -24,45 +24,84 @@ rag_api/
 └── README.md                   # This file
 ```
 
-## Installation
+## Prerequisites
 
-1. Create and activate virtual environment:
-```bash
-python -m venv myenv
-source myenv/bin/activate  # On Linux/Mac
+- Python 3.12 (for local runs) or Docker (for containerized runs)
+- Milvus Standalone (run via Docker Compose)
+- ONNX models and local tokenizers already included in `onnx/` (no internet required)
+
+## Milvus Setup (required)
+
+Run Milvus locally with Docker Compose:
+
+```yaml
+# docker-compose.milvus.yml
+version: "3.8"
+services:
+    etcd:
+        image: quay.io/coreos/etcd:v3.5.18
+        environment:
+            - ETCD_AUTO_COMPACTION_MODE=revision
+            - ETCD_AUTO_COMPACTION_RETENTION=1000
+            - ETCD_QUOTA_BACKEND_BYTES=4294967296
+            - ETCD_SNAPSHOT_COUNT=50000
+        volumes:
+            - ./volumes/etcd:/etcd
+        command: ["etcd", "-advertise-client-urls", "http://etcd:2379", "-listen-client-urls", "http://0.0.0.0:2379", "-listen-peer-urls", "http://0.0.0.0:2380"]
+
+    minio:
+        image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+        environment:
+            - MINIO_ACCESS_KEY=minioadmin
+            - MINIO_SECRET_KEY=minioadmin
+        volumes:
+            - ./volumes/minio:/minio_data
+        command: ["server", "/minio_data"]
+        ports:
+            - "9000:9000"
+            - "9001:9001"
+
+    milvus:
+        image: milvusdb/milvus:v2.6.0
+        depends_on: [etcd, minio]
+        environment:
+            - ETCD_ENDPOINTS=etcd:2379
+            - MINIO_ADDRESS=minio:9000
+        ports:
+            - "19530:19530"
+            - "9091:9091"
+        volumes:
+            - ./volumes/milvus:/var/lib/milvus
+        command: ["milvus", "run", "standalone"]
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-## Configuration
-
-Set environment variables for Milvus connection:
+Bring up Milvus:
 
 ```bash
-export MILVUS_HOST="localhost"
-export MILVUS_PORT="19530"
-export MILVUS_USER=""
-export MILVUS_PASSWORD=""
-export MILVUS_TOKEN=""
-export MILVUS_URI=""  # Use this for cloud instances
+docker compose -f docker-compose.milvus.yml up -d
 ```
 
-## Running the API
+Health check:
 
-### Development Server
 ```bash
-python run.py
+curl -s http://localhost:9091/healthz
 ```
 
-### Production Server
+## Installation (local)
+
+### Run with Docker
+
+Milvus must be started separately (see above). This container only runs the API.
+
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+docker build -t beaglemind-api .
+docker run --rm -p 8000:8000 \
+    -e MILVUS_HOST=host.docker.internal \
+    -e MILVUS_PORT=19530 \
+    beaglemind-api
 ```
 
-The API will be available at `http://localhost:8000`
+If running Milvus on Linux host, use `--network host` or set `MILVUS_HOST=localhost` and add `--add-host=host.docker.internal:host-gateway` if needed.
 
 ## API Endpoints
 
@@ -88,9 +127,9 @@ Initialize the Milvus collection and embedding models.
 }
 ```
 
-### 2. Retrieve Documents
+### 1) Retrieve Documents
 
-**POST** `/api/v1/retrieve`
+POST `/api/retrieve`
 
 Search for documents using semantic similarity.
 
@@ -125,18 +164,73 @@ Search for documents using semantic similarity.
 }
 ```
 
+### 2) Ingest GitHub Repository into a Collection
+
+POST `/api/ingest-data`
+
+Body:
+```json
+{
+    "collection_name": "beaglemind_col",
+    "github_url": "https://github.com/owner/repo",
+    "branch": "main"
+}
+```
+
+Response:
+```json
+{
+    "success": true,
+    "message": "Successfully ingested repository into collection 'beaglemind_col'",
+    "stats": {
+        "files_processed": 150,
+        "chunks_generated": 1200,
+        "files_with_code": 80,
+        "avg_quality_score": 0.78,
+        "total_time": 45.2
+    }
+}
+```
+
+Notes:
+- If the collection exists, new content is appended.
+- Progress logs show in the API console.
+
+### 3) Ingestion Service Status
+
+GET `/api/ingest-data/status`
+
+Response:
+```json
+{
+    "success": true,
+    "message": "GitHub ingestion service is running",
+    "active_collections": 1
+}
+```
+
 ## Models Used
 
-- **Embedding Model**: `BAAI/bge-base-en-v1.5` (BGE base English v1.5)
-- **Reranker Model**: `cross-encoder/ms-marco-MiniLM-L-6-v2` (CrossEncoder for reranking)
+- Embeddings: BGE Base EN v1.5 (ONNX) — tokenizer loaded from `./onnx` (offline)
+- Reranker: Cross-Encoder MS MARCO MiniLM-L-6-v2 (ONNX) — tokenizer loaded from `./onnx` (offline)
 
 ## Features
 
 - Semantic document search using BAAI BGE embeddings
 - CrossEncoder-based reranking for improved relevance
 - Comprehensive metadata support
-- Vector similarity search with COSINE metric
+- Vector similarity search (L2/IVF_FLAT)
 - Configurable result filtering and ranking
+
+## Troubleshooting
+
+- "cannot create index on non-exist field": ensure indexes are created only on existing fields. Current schema fields are: id, document, embedding, file_name, file_path, file_type, source_link, chunk_index, language, has_code, repo_name, content_quality_score, semantic_density_score, information_value_score.
+- SSL errors during Docker builds: pre-download wheels on host or build with host network. See Dockerfile comments and consider a local wheelhouse.
+- No logs during ingestion: the service runs blocking work in a thread pool and logs to console and app.log. Tail logs with `tail -f app.log`.
+
+## API Docs
+
+Swagger UI: `http://localhost:8000/docs`
 
 ## Health Check
 
